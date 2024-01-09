@@ -1,0 +1,6 @@
+{
+    "description": "Template used by Llama.",
+    "prompt_input": "System: {instruction}\nUser: {input}\nAssistant: ",
+    "prompt_no_input": "User: {instruction}\nAssistant: ",
+    "response_split": "Assistant: "    
+}

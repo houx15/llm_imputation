@@ -1,0 +1,70 @@
+{
+    "income16": {
+        "task_type": "continuous",
+        "num_labels": 1
+    },
+    "raclive": {
+        "task_type": "class",
+        "num_labels": 2
+    },
+    "age": {
+        "task_type": "continuous",
+        "num_labels": 1
+    },
+    "pres20": {
+        "task_type": "class",
+        "num_labels": 4
+    },
+    "mawrkgrw": {
+        "task_type": "class",
+        "num_labels": 2
+    },
+    "wordsum": {
+        "task_type": "continuous",
+        "num_labels": 1
+    },
+    "educ": {
+        "task_type": "continuous",
+        "num_labels": 1
+    },
+    "cappun": {
+        "task_type": "class",
+        "num_labels": 2
+    },
+    "polviews": {
+        "task_type": "sequence",
+        "num_labels": 7
+    },
+    "letin1a": {
+        "task_type": "sequence",
+        "num_labels": 5
+    },
+    "homosex": {
+        "task_type": "sequence",
+        "num_labels": 4
+    },
+    "premarsx": {
+        "task_type": "sequence",
+        "num_labels": 4
+    },
+    "finrela": {
+        "task_type": "sequence",
+        "num_labels": 5
+    },
+    "gunlaw": {
+        "task_type": "class",
+        "num_labels": 2
+    },
+    "class": {
+        "task_type": "sequence",
+        "num_labels": 4
+    },
+    "marhomo": {
+        "task_type": "sequence",
+        "num_labels": 5
+    },
+    "partyid": {
+        "task_type": "sequence",
+        "num_labels": 7
+    }
+}

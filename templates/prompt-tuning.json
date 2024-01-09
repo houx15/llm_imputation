@@ -1,0 +1,6 @@
+{
+    "description": "Template used for prompt-tuning.",
+    "prompt_input": "Text: {input}, Label: ",
+    "prompt_no_input": "",
+    "response_split": "Label: "    
+}
