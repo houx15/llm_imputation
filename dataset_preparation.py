@@ -2,127 +2,181 @@ import pandas as pd
 import numpy as np
 
 import os
+import json
 
 from sklearn import metrics
 
+from typing import List
+
 
 inapplicable_sig = ".i"
+inapplicable_sig2 = "iap"
 id_columns = ["id", "wtssnrps", "wtssps", "wtssnrps_next", "wtssps_next"]
 
-text_stop_words = ["iap", "skipped on web", ]
+text_stop_words = [
+    "iap",
+    "skipped on web",
+]
+
+same_features = {"income16": ["income", "coninc", "realinc"], "educ": ["degree"]}
 
 
-def numeric_data_preparation():
-    data = pd.read_csv("dataset/num_2022.csv")
-    i_num = data.apply(lambda col: col[col == '.i'].count()).sum()
-    n_num = data.apply(lambda col: col[col == '.n'].count()).sum()
-    d_num = data.apply(lambda col: col[col == '.d'].count()).sum()
+class DatasetPreparation(object):
+    def __init__(self) -> None:
+        self.init_var_label_dict()
+        self.to_predict_features = ["income16", "educ", "letin1a", "finrela", "marhomo"]
 
-    print(f"dataset contains {i_num} .i, {d_num} .d, and {n_num} .n")
+    def init_var_label_dict(self):
+        var_label_df = pd.read_csv("dataset/label.csv")
+        self.var_label_dict = {}
+        for index, row in var_label_df.iterrows():
+            self.var_label_dict[row["name"]] = row["simplab"]
 
-    # data.replace(".i", np.nan, inplace=True)
-    data.replace(".n", np.nan, inplace=True)
-    data.replace(".d", np.nan, inplace=True)
-    data.replace(".s", np.nan, inplace=True)
-    data.replace(".r", np.nan, inplace=True)
-    data.replace(".x", np.nan, inplace=True)
-    data.replace(".y", np.nan, inplace=True)
-    data.replace(".z", np.nan, inplace=True)
-    data.replace(".u", np.nan, inplace=True)
-    data.replace(".m", np.nan, inplace=True)
-    data.replace(".b", np.nan, inplace=True)
-    data.replace(".p", np.nan, inplace=True)
-    data.replace(".f", np.nan, inplace=True)
+        del var_label_df
 
-    return data
+    def init_dataset(self, target_features: List[str], skip_predicting_labels: bool):
+        dataset = self.numeric_data_preparation()
 
+        for target_feature in target_features:
+            dataset = dataset[dataset[target_feature] != inapplicable_sig]
+            dataset.dropna(axis=0, subset=[target_feature], inplace=True)
+        dataset.replace(inapplicable_sig, np.nan, inplace=True)
+        dataset.replace(np.nan, -9, inplace=True)
+        self.id_remained = dataset["id"].values
+        dataset = dataset.apply(pd.to_numeric, errors="coerce")
+        # dataset.drop(id_columns, axis=1, inplace=True)
+        # TODO id_columns不应该在这个时候就被删除
 
-def mutual_information(applicable, target_feature):
-    # 选择互信息最高的n个feature
+        self.dataset = dataset
+        self.skip_predicting_labels = skip_predicting_labels
+        return self.dataset
 
-    features = applicable.drop(target_feature, axis=1)
-    target = applicable[target_feature]
+    def numeric_data_preparation(self):
+        data = pd.read_csv("dataset/num_2022.csv")
+        i_num = data.apply(lambda col: col[col == ".i"].count()).sum()
+        n_num = data.apply(lambda col: col[col == ".n"].count()).sum()
+        d_num = data.apply(lambda col: col[col == ".d"].count()).sum()
 
-    muinfo = {"feature": [], "info": []}
-    for c in features.columns:
-        info = metrics.mutual_info_score(features[c], target)
-        muinfo["feature"].append(c)
-        muinfo["info"].append(info)
-    
-    output_df = pd.DataFrame(muinfo)
-    output_df.sort_values(by="info", ascending=False, inplace=True)
-    return output_df
+        print(f"dataset contains {i_num} .i, {d_num} .d, and {n_num} .n")
 
+        # data.replace(".i", np.nan, inplace=True)
+        data.replace(".n", np.nan, inplace=True)
+        data.replace(".d", np.nan, inplace=True)
+        data.replace(".s", np.nan, inplace=True)
+        data.replace(".r", np.nan, inplace=True)
+        data.replace(".x", np.nan, inplace=True)
+        data.replace(".y", np.nan, inplace=True)
+        data.replace(".z", np.nan, inplace=True)
+        data.replace(".u", np.nan, inplace=True)
+        data.replace(".m", np.nan, inplace=True)
+        data.replace(".b", np.nan, inplace=True)
+        data.replace(".p", np.nan, inplace=True)
+        data.replace(".f", np.nan, inplace=True)
 
-def get_text_dataset(top_keys, target_feature):
-    var_label_df = pd.read_csv("dataset/label_2022.csv")
-    var_label_dict = {}
-    for index, row in var_label_df.iterrows():
-        var_label_dict[row["name"]] = row["varlab"]
-    
-    del var_label_df
+        return data
 
-    text_df = pd.read_csv("dataset/text_2022.csv")
-    text_label = text_df[target_feature]
-    text_df = text_df[top_keys]
-    
-    text_data_dict = {"text": [], "label": []}
+    def mutual_information(self, applicable, target_feature):
+        # 选择互信息最高的n个feature
+        features = applicable.drop(target_feature, axis=1)
 
-    target_label = var_label_dict[target_feature]
-    suffix = f"Please imputate what the {target_label} of this individual is."
-    for index, row in text_df.iterrows:
-        label = text_label.loc[index]
+        stop_feat = same_features.get(target_feature, [])
+        # TODO Delete to predict features
+        all_stop_feat = stop_feat + id_columns
+        if self.skip_predicting_labels:
+            self.to_predict_features.remove(target_feature)
+            all_stop_feat += self.to_predict_features
+        features = features.drop(all_stop_feat, axis=1)
 
-        prompt = "Here is the data for an individual in a survey dataset."
+        target = applicable[target_feature]
+
+        muinfo = {"feature": [], "info": []}
+        for c in features.columns:
+            info = metrics.mutual_info_score(features[c], target)
+            muinfo["feature"].append(c)
+            muinfo["info"].append(info)
+
+        output_df = pd.DataFrame(muinfo)
+        output_df.sort_values(by="info", ascending=False, inplace=True)
+        return output_df
+
+    def prompt_compiler(self, row, target_feature):
+        prompt = "One's data in 2022 GSS data: "
         for var, value in row.iteritems():
+            if var == "id":
+                continue
+            if var == target_feature:
+                continue
             if value == "iap":
                 continue
-            var_label = var_label_dict.get(var)
+            var_label = self.var_label_dict.get(var)
             if var_label is None:
                 continue
 
-            prompt += f"The {var_label} is {value}. "
-        
-        prompt += suffix
+            prompt += f"{var_label} is {value}. "
+        return prompt
 
-        text_data_dict["text"].append(prompt)
-        text_data_dict["label"].append(label)
-    
-    text_data_df = pd.DataFrame(text_data_dict)
-    return text_data_df
+    def get_text_dataset(self, top_keys, target_feature, id_remained):
+        text_df = pd.read_csv("dataset/text_2022.csv")
 
+        text_df.drop(text_df[~text_df["id"].isin(id_remained)].index, inplace=True)
+        text_label = text_df[target_feature]
 
+        remained_keys = ["id"] + top_keys + [target_feature]
+        text_df = text_df[remained_keys]
 
+        target_label = self.var_label_dict[target_feature]
+        suffix = f"Please imputate his {target_label}."
 
-def get_full_dataset(target_feature, datapath=None, feature_num=50, strategy="numeric"):
-    dataset = numeric_data_preparation()
+        text_df["text"] = text_df.apply(
+            lambda x: self.prompt_compiler(x, target_feature), axis=1
+        )
+        text_df["text"] = text_df["text"] + suffix
 
-    dataset = dataset[dataset[target_feature] != inapplicable_sig]
-    dataset.replace(inapplicable_sig, np.nan, inplace=True)
-    dataset.replace(np.nan, -9, inplace=True)
-    dataset = dataset.apply(pd.to_numeric, errors='coerce')
-    dataset = dataset.drop(id_columns, axis=1)
+        text_df.rename(columns={target_feature: "labels"}, inplace=True)
 
-    mutual_info = mutual_information(dataset, target_feature)
-    top_keys = mutual_info[:feature_num]["feature"]
+        return text_df
 
+    def to_json(self, row):
+        number_array = row.to_numpy()  # 获取一行的值，并转换为 NumPy 数组
+        json_str = json.dumps(number_array.tolist())  # 转换为 JSON 字符串
+        return json_str
 
-    output_dataset = dataset[top_keys]
-    label = dataset[target_feature]
+    def get_feature_full_dataset(
+        self, target_feature, datapath=None, feature_num=50, strategy="numeric"
+    ):
+        mutual_info = self.mutual_information(self.dataset, target_feature)
+        top_keys = mutual_info[:feature_num]["feature"].to_list()
 
-    text_dataset = get_text_dataset(top_keys, target_feature)
+        remained_keys = ["id"] + top_keys + [target_feature]
+        output_dataset = self.dataset[remained_keys]
+        # label = self.dataset[target_feature]
 
-    output_dataset = pd.concat([output_dataset, label], axis=1)
-    text_dataset = pd.concat([text_dataset, label], axis=1)
+        text_dataset = self.get_text_dataset(top_keys, target_feature, self.id_remained)
+        text_dataset = text_dataset[["text", "labels", "id"]]
 
-    output_dataset.rename(columns={target_feature: "num_label"}, inplace=True)
-    text_dataset.rename(columns={target_feature: "num_label"}, inplace=True)
+        output_dataset["json_text"] = output_dataset.apply(self.to_json, axis=1)
+        output_dataset = output_dataset[["json_text", "id", target_feature]]
 
-    if datapath is None:
-        datapath = f"dataset/{target_feature}"
-    if not os.path.exists(datapath):
-        os.makedirs(datapath)
+        all_dataset = pd.merge(left=output_dataset, right=text_dataset, on=["id"])
+        # all_dataset.drop(
+        #     all_dataset[all_dataset[target_feature] == -9].index, inplace=True
+        # )
+        # all_dataset.drop(
+        #     all_dataset[all_dataset[target_feature] == None].index, inplace=True
+        # )
+        # all_dataset.dropna(axis=0, subset=[target_feature], inplace=True)
 
-    text_dataset.to_csv(f"{datapath}/text-dataset.csv")
-    output_dataset.to_csv(f"{datapath}/num-dataset.csv")
-    return output_dataset, text_dataset
+        all_dataset.rename(columns={target_feature: "num_label"}, inplace=True)
+
+        output_dataset = all_dataset[["json_text", "num_label"]]
+        text_dataset = all_dataset[["text", "labels", "num_label"]]
+        text_dataset.dropna(axis=0, subset=["text"], inplace=True)
+
+        if datapath is None:
+            datapath = f"dataset/{target_feature}"
+        if not os.path.exists(datapath):
+            os.makedirs(datapath)
+
+        text_dataset.to_csv(f"{datapath}/text-dataset.csv", index=False)
+        output_dataset.to_csv(f"{datapath}/num-dataset.csv", index=False)
+        return output_dataset, text_dataset

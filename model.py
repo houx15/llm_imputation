@@ -26,7 +26,7 @@ from transformers import (
 )
 
 from utils.prompter import Prompter
-from utils.utils import result_translator, sentence_cleaner
+from utils.utils import log
 
 from sklearn.metrics import (
     accuracy_score,
@@ -55,9 +55,7 @@ class TrainingPara(object):
     lora_target_modules: List[str] = ["q_proj", "v_proj"]
     train_on_inputs: bool = False  # if False, masks out inputs in loss
     add_eos_token: bool = True
-    group_by_length: bool = (
-        False  # faster, but produces an odd training loss curve
-    )
+    group_by_length: bool = False  # faster, but produces an odd training loss curve
     warmup_steps: int = 50
     optim: str = "adamw_torch"
     logging_steps: int = 50
@@ -68,9 +66,7 @@ class TrainingPara(object):
     def __init__(self, param_dict: dict = {}):
         for key, value in param_dict.items():
             setattr(self, key, value)
-        self.gradient_accumulation_steps = (
-            self.batch_size // self.micro_batch_size
-        )
+        self.gradient_accumulation_steps = self.batch_size // self.micro_batch_size
 
 
 class LlamaModel(object):
@@ -78,7 +74,7 @@ class LlamaModel(object):
         # model/data params
         self,
         feature: str,
-        task_type: str, # continuous, class, sequence
+        task_type: str,  # continuous, class, sequence
         num_labels: int,
         data_path: str,
         strategy: str = "numeric",  # numeric/text/prompt
@@ -115,6 +111,7 @@ class LlamaModel(object):
 
         self.output_dir = output_dir
         self.log_dir = log_dir
+        self.log_file = f"{log_dir}/result.txt"
 
         if not os.path.exists(self.output_dir):
             os.makedirs(self.output_dir)
@@ -170,6 +167,9 @@ class LlamaModel(object):
         self.task_type = task_type
         self.num_labels = num_labels
 
+        # TODO Delete
+        self.tokenize_length = []
+
         self.model_init(task_type, num_labels)
         self.tokenizer = LlamaTokenizer.from_pretrained(base_model)
         self.tokenizer.pad_token_id = (
@@ -182,16 +182,10 @@ class LlamaModel(object):
 
         self.data_loader(data_path)
 
-    def model_init(
-        self,
-        task_type,
-        num_labels
-    ):
+    def model_init(self, task_type, num_labels):
         torch.manual_seed(42)
         if self.strategy not in ["numeric", "text", "prompt"]:
-            raise NotImplementedError(
-                f"strategy type {self.strategy} not implemented"
-            )
+            raise NotImplementedError(f"strategy type {self.strategy} not implemented")
 
         model = None
         if self.strategy in ["numeric", "text"]:
@@ -201,6 +195,7 @@ class LlamaModel(object):
                 load_in_8bit=self.load_8bit,
                 torch_dtype=torch.float16,
                 device_map=self.device_map,
+                # use_cache=False,
             )
         elif self.strategy == "prompt":
             model = LlamaForCausalLM.from_pretrained(
@@ -218,7 +213,6 @@ class LlamaModel(object):
 
         if self.peft:
             if self.peft_weights is not None:
-                print("Peft weight file path:", self.peft_weights)
                 model = PeftModel.from_pretrained(
                     model,
                     self.peft_weights,
@@ -289,9 +283,11 @@ class LlamaModel(object):
         return model
 
     def generate_and_tokenize_prompt(self, data_point):
-        text = sentence_cleaner(data_point["input"])
+        text = data_point["input"]
         inputs = self.prompter.generate_prompt(
-            instruction=None if self.strategy == "prompt" else data_point["instruction"],
+            instruction=None
+            if self.strategy == "prompt"
+            else data_point["instruction"],
             input=text,
             label=None,
         )
@@ -315,19 +311,24 @@ class LlamaModel(object):
         return model_input
 
     def numeric_tokenizer(self, data_point):
-        feature = data_point
-        print(data_point)
-        result = {
-            "input_ids"
-        }
+        label = data_point["num_label"]
+        input_ids = json.loads(data_point["text"])
+        print(input_ids)
+        result = {"input_ids": input_ids, "attention_mask": np.ones(len(input_ids))}
+        if self.task_type == "class":
+            result["labels"] = int(label)
+        else:
+            result["labels"] = float(label)
 
-    
+        return result
+
     def text_tokenizer(self, data_point):
-
         result = self.tokenizer(
+            # "192.2",
             data_point["text"],
             truncation=True,
             max_length=self.config.cutoff_len,
+            # TODO Delete
             padding=False,
             return_tensors=None,
         )
@@ -339,18 +340,20 @@ class LlamaModel(object):
             result["input_ids"].append(self.tokenizer.eos_token_id)
             result["attention_mask"].append(1)
 
+        # TODO DELETE
+        self.tokenize_length.append(len(result["input_ids"]))
+        # print(data_point["text"], result)
+        # raise ValueError
         if self.task_type == "class":
-            result["labels"] = int(data_point["label"])
+            result["labels"] = int(data_point["num_label"])
         else:
-            result["labels"] = float(data_point["label"])
+            result["labels"] = float(data_point["num_label"])
 
         return result
 
     def data_loader(self, data_path):
-        tokenizer_f = {
-            "numeric": self.numeric_tokenizer,
-            "text": self.text_tokenizer
-        }
+        self.data_path = data_path
+        tokenizer_f = {"numeric": self.numeric_tokenizer, "text": self.text_tokenizer}
         if self.strategy in ["numeric", "text"]:
             dataset = load_dataset(
                 "csv",
@@ -360,22 +363,21 @@ class LlamaModel(object):
                     "test": f"{data_path}/test.csv",
                 },
             )
-            self.train_data = (
-                dataset["train"].shuffle().map(tokenizer_f[self.strategy])
-            )
+            self.train_data = dataset["train"].shuffle().map(tokenizer_f[self.strategy])
+            import matplotlib.pyplot as plt
+
+            plt.hist(self.tokenize_length, bins=40)
+            plt.savefig(f"logs/length-{self.feature}.jpg")
+            plt.cla()
+
             self.validate_data = (
                 dataset["validate"].shuffle().map(tokenizer_f[self.strategy])
             )
-            self.test_data = (
-                dataset["test"].shuffle().map(tokenizer_f[self.strategy])
-            )
-
-            # signature_columns = ["input_ids", "attention_mask", "labels"]
-            # ignored_columns = list(set(self.train_data.column_names) - set(signature_columns))
-
-            self.train_data = self.train_data.remove_columns(["label"])
-            self.validate_data = self.validate_data.remove_columns(["label"])
-            self.test_data = self.test_data.remove_columns(["label"])
+            self.test_data = dataset["test"].map(tokenizer_f[self.strategy])
+            # self.test_data = dataset["test"].shuffle().map(tokenizer_f[self.strategy])
+            # self.train_data = self.train_data.remove_columns(["label"])
+            # self.validate_data = self.validate_data.remove_columns(["label"])
+            # self.test_data = self.test_data.remove_columns(["label"])
 
         elif self.strategy == "prompt":
             dataset = load_dataset(
@@ -386,21 +388,10 @@ class LlamaModel(object):
                     "test": f"{data_path}/test.json",
                 },
             )
-            self.train_data = (
-                dataset["train"]
-                .shuffle()
-                .map(self.generate_and_tokenize_prompt)
-            )
-            self.validate_data = (
-                dataset["validate"]
-                .shuffle()
-                .map(self.generate_and_tokenize_prompt)
-            )
-            self.test_data = (
-                dataset["test"]
-                .shuffle()
-                .map(self.generate_and_tokenize_prompt)
-            )
+            self.train_data = dataset["train"].shuffle().map(self.text_tokenizer)
+
+            self.validate_data = dataset["validate"].shuffle().map(self.text_tokenizer)
+            self.test_data = dataset["test"].shuffle().map(self.text_tokenizer)
         print(
             f"\nFinish loading data: there are {len(self.train_data)} train data, {len(self.validate_data)} validation data, {len(self.test_data)} test data."
         )
@@ -437,9 +428,7 @@ class LlamaModel(object):
         rmse = mean_squared_error(labels, preds, squared=False)
 
         integerized_preds = np.around(preds)
-        integerized_rmse = mean_squared_error(
-            labels, integerized_preds, squared=False
-        )
+        integerized_rmse = mean_squared_error(labels, integerized_preds, squared=False)
 
         diff = np.subtract(integerized_preds, labels)
         # when integerized_pred equals to label, assume there diff is 0
@@ -447,10 +436,10 @@ class LlamaModel(object):
         label_precision_rmse = mean_squared_error(
             labels, label_precision_preds, squared=False
         )
-        for idx, x in np.ndenumerate(labels):
-            preds_set = self.error_analysis.get(x, np.array(0))
-            preds_set = np.append(preds_set, preds[idx])
-            self.error_analysis[x] = preds_set
+        # for idx, x in np.ndenumerate(labels):
+        #     preds_set = self.error_analysis.get(x, np.array(0))
+        #     preds_set = np.append(preds_set, preds[idx])
+        #     self.error_analysis[x] = preds_set
 
         return {
             "rmse": rmse,
@@ -469,9 +458,7 @@ class LlamaModel(object):
             "learning_rate": trial.suggest_categorical(
                 "learning_rate", [5e-5, 1e-4, 2e-4, 3e-4, 5e-4, 1e-3]
             ),
-            "num_train_epochs": trial.suggest_int(
-                "num_train_epochs", 10, 20, log=True
-            ),
+            "num_train_epochs": trial.suggest_int("num_train_epochs", 10, 20, log=True),
             "per_device_train_batch_size": trial.suggest_categorical(
                 "per_device_train_batch_size", [16, 32, 64]
             ),
@@ -482,9 +469,7 @@ class LlamaModel(object):
 
         metric_for_best_model = ""
         if self.strategy in ["numeric", "text"]:
-            metric_for_best_model = (
-                "accuracy" if self.task_type == "class" else "rmse"
-            )
+            metric_for_best_model = "accuracy" if self.task_type == "class" else "rmse"
         else:
             metric_for_best_model = "loss"
 
@@ -517,6 +502,7 @@ class LlamaModel(object):
                 # run_name=wandb_run_name if use_wandb else None,
                 report_to=["tensorboard"],
                 logging_dir=self.log_dir,
+                disable_tqdm=True,
             ),
             data_collator=transformers.DataCollatorWithPadding(
                 self.tokenizer, return_tensors="pt"
@@ -550,9 +536,7 @@ class LlamaModel(object):
             best_run = self.trainer.hyperparameter_search(
                 hp_space=lambda x: hp_space(x),
                 backend="optuna",
-                direction="maximize"
-                if self.task_type == "binary"
-                else "minimize",
+                direction="maximize" if self.task_type == "binary" else "minimize",
             )
             print("best_run", best_run)
 
@@ -568,7 +552,7 @@ class LlamaModel(object):
 
     def sequence_eval(self):
         self.model.eval()
-        self.error_analysis = {}  # TODO can be optimized
+        # self.error_analysis = {}  # TODO can be optimized
         predictor = transformers.Trainer(
             model=self.model,
             args=transformers.TrainingArguments(
@@ -606,23 +590,31 @@ class LlamaModel(object):
         # TODO
         pred = predictor.predict(test_dataset=self.test_data)
         print(pred.metrics)
-        prediction = pred.predictions[0].flatten()
-        prediction = np.clip(prediction, -2, 2)
+        log(self.log_file, str(pred.metrics))
+        prediction = pred.predictions.flatten()
+        # prediction = np.clip(prediction, -2, 2)
+
+        test_result = pd.read_csv(f"{self.data_path}/test.csv")
+        test_result["prediction"] = prediction
+        test_result.to_csv(f"{self.data_path}/result.csv")
 
         rmse_dict = {}
         for k, v in pred.metrics.items():
             print(f"{k}:    {v}")
-        for k, s in self.error_analysis.items():
-            true = np.ones(s.shape) * k
-            rmse = mean_squared_error(true, s, squared=False)
-            rmse_dict[k] = rmse
+            log(self.log_file, f"{k}:    {v}")
+            # for k, s in self.error_analysis.items():
+            #     true = np.ones(s.shape) * k
+            #     rmse = mean_squared_error(true, s, squared=False)
+            #     rmse_dict[k] = rmse
             # true = torch.from_numpy(true)
             # s = torch.from_numpy(s)
             # huber = creterion(s, true)
-            print(f"{k}:    rmse-{rmse}")
+            # print(f"{k}:    rmse-{rmse}")
+            # log(self.log_file, f"{k}:    rmse-{rmse}")
             # log(log_file, f'{str(k)}:    rmse-{str(rmse)}; huber-{huber}')
 
         torch.cuda.empty_cache()
+        return test_result["num_label"].values, test_result["prediction"].values
 
     def single_prompt_evaluate(
         self,
@@ -676,26 +668,18 @@ class LlamaModel(object):
             translator_dict = json.loads(rfile.read())
             translator = translator_dict[self.topic]
 
-        print(self.topic, translator)
         prediction = np.array([])
         true = np.array([])
         print("evaluate begin...")
         for single_test in tqdm(self.test_data):
             single_prompt = self.prompter.generate_prompt(
-                instruction=None if self.strategy == "prompt" else single_test["instruction"],
+                instruction=None
+                if self.strategy == "prompt"
+                else single_test["instruction"],
                 input=single_test["input"],
                 label=None,
             )
             result = self.single_prompt_evaluate(single_prompt)
-            output = result_translator(self.topic, result, translator, self.task_type)
-            prediction = np.append(prediction, output)
-            label = result_translator(
-                self.topic, single_test["output"], translator, self.task_type
-            )
-            true = np.append(true, label)
-            print(
-                f"result: {single_prompt}{result}\noutput: {output}\nlabel: {label}\n"
-            )
 
         acc = accuracy_score(true, prediction)
         data = pd.DataFrame(data={"predict": prediction, "true": true})
@@ -718,10 +702,10 @@ class LlamaModel(object):
             relevant_data.predict.values,
             squared=False,
         )
-        for _, row in relevant_data.iterrows():
-            preds_set = self.error_analysis.get(row["true"], np.array(0))
-            preds_set = np.append(preds_set, row["predict"])
-            self.error_analysis[row["true"]] = preds_set
+        # for _, row in relevant_data.iterrows():
+        #     preds_set = self.error_analysis.get(row["true"], np.array(0))
+        #     preds_set = np.append(preds_set, row["predict"])
+        #     self.error_analysis[row["true"]] = preds_set
 
         print(f"total acc: {acc}\n")
         print(
@@ -730,19 +714,19 @@ class LlamaModel(object):
         print(f"rmse: {rmse}\n")
         print("error_analysis: \n")
 
-        for k, s in self.error_analysis.items():
-            true = np.ones(s.shape) * k
-            rmse = mean_squared_error(true, s, squared=False)
+        # for k, s in self.error_analysis.items():
+        #     true = np.ones(s.shape) * k
+        #     rmse = mean_squared_error(true, s, squared=False)
 
-            print(f"{str(k)}:    {str(rmse)}")
+        # print(f"{str(k)}:    {str(rmse)}")
 
         return acc, rmse
 
     def eval(self):
-        if self.strategy == "sequence":
-            self.sequence_eval()
+        if self.strategy in ["text", "numeric"]:
+            return self.sequence_eval()
         else:
-            self.generation_eval()
+            return self.generation_eval()
 
     def predict(
         self,
@@ -751,9 +735,7 @@ class LlamaModel(object):
         batch: int = 64,
         verbose=print,
     ) -> np.array:
-        verbose(
-            f"predict(texts={len(texts)}, max_length={max_length}, batch={batch})"
-        )
+        verbose(f"predict(texts={len(texts)}, max_length={max_length}, batch={batch})")
         self.model.eval()
         torch.cuda.empty_cache()
         try:
@@ -770,10 +752,7 @@ class LlamaModel(object):
                 for i in range(0, len(texts), batch):
                     # encode input texts
                     encoding = self.tokenizer(
-                        [
-                            sentence_cleaner(single_text)
-                            for single_text in texts[i : i + batch]
-                        ],
+                        [single_text for single_text in texts[i : i + batch]],
                         truncation=True,
                         max_length=max_length,
                         padding=False,
@@ -809,9 +788,7 @@ class LlamaModel(object):
                             prediction, special.expit(outputs.numpy()[:, 1])
                         )  # a float probability of label "1" for each input string
                     else:
-                        raise ValueError(
-                            f"Unknown self.task_type = {self.task_type}."
-                        )
+                        raise ValueError(f"Unknown self.task_type = {self.task_type}.")
                     del outputs
                     torch.cuda.empty_cache()
                     verbose(f"prediction.shape={prediction.shape}")
