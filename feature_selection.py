@@ -10,7 +10,7 @@ id_columns = ["id", "wtssnrps", "wtssps", "wtssnrps_next", "wtssps_next"]
 
 
 def data_preparation():
-    data = pd.read_csv("data/num_2022.csv")
+    data = pd.read_csv("dataset/num_2022.csv")
     i_num = data.apply(lambda col: col[col == '.i'].count()).sum()
     n_num = data.apply(lambda col: col[col == '.n'].count()).sum()
     d_num = data.apply(lambda col: col[col == '.d'].count()).sum()
@@ -42,6 +42,7 @@ def importance(data, target_feature):
 
     features = applicable.drop(target_feature, axis=1)
     target = applicable[target_feature]
+    # print(max(target), min(target), target_feature)
 
     rf = RandomForestRegressor()
     rf.fit(features, target)
