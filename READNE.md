@@ -55,6 +55,15 @@ Some missing values imputation strategies in engineering may offer valuable refe
 - run.py: entry point
 
 ### Performance
+|feature|label|rmse|range|
+|---|---|---|---|
+|income16|total family income|5.0528|[1, 26]|
+|educ|highest year of school completed|1.9605|[1,20]|
+|letin1a|number of immigrants nowadays should be|1.0497|[1,5]|
+|finrela|opinion of family income|0.7122|[1,5]|
+|marhomo|homosexuals should have right to marry|0.9068|[1,5]|
+
+![Covariance Matrix](Covariance-Matrix.png)
 
 ### To-Dos
 [ ] Different LLMs
