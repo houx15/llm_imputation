@@ -43,13 +43,13 @@ Some missing values imputation strategies in engineering may offer valuable refe
 
 ### File Structure
 - configs
-|--task_description.json: define the type of the prediction task for each feature
+- |--task_description.json: define the type of the prediction task for each feature
 - dataset
 - logs
 - results
 - train_para: where to save the hyperparameters
 - utils
-|--utils.py
+- |--utils.py
 - dataset_preparation.py: calculate the mutual information and generate the dataset (in label text or numbers)
 - model.py: fine-tune and evaluate
 - run.py: entry point
