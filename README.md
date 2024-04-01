@@ -66,10 +66,10 @@ Some missing values imputation strategies in engineering may offer valuable refe
 ![Covariance Matrix](Covariance-Matrix.png)
 
 ### To-Dos
-[ ] Different LLMs
-[ ] Does more features help?
-[x] Can the imputed data keep the covariance?
-[ ] Other feature selection strategies
-[ ] Does the pre-trained data has an influence on the resulted covariance?
-[ ] Text-based imputation
-[ ] Predict n features in one run?
+- [ ] Different LLMs
+- [ ] Does more features help?
+- [x] Can the imputed data keep the covariance?
+- [ ] Other feature selection strategies
+- [ ] Does the pre-trained data has an influence on the resulted covariance?
+- [ ] Text-based imputation
+- [ ] Predict n features in one run?
